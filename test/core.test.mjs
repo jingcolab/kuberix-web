@@ -1,0 +1,17 @@
+import test from 'node:test';import assert from'node:assert/strict';import{DEFAULTS,CHECKS,validate,estimate,buildPlan,restoreDraft}from'../core.mjs';
+const valid=()=>({...DEFAULTS,checks:[],name:'Pick study',task:'Pick an object and place it in a marked tray.',success:'Object stays inside tray for two seconds.',stop:'Stop on collision or tracking loss; review in simulation.'});
+test('incomplete task rejected',()=>assert.ok(validate(DEFAULTS).task));
+test('valid plan accepted',()=>assert.deepEqual(validate(valid()),{}));
+test('recording and frame arithmetic',()=>{const e=estimate(valid());assert.equal(e.hours,1);assert.equal(e.steps,108000);assert.equal(e.frames,216000);assert.equal(e.gib,6.705522537231445);assert.equal(e.training,96);assert.equal(e.validation,12);assert.equal(e.test,12);});
+test('nonfinite, empty and negative inputs rejected',()=>{for(const x of ['',NaN,Infinity,-1])assert.ok(validate({...valid(),episodes:x}).episodes);});
+test('whole-number requirements',()=>assert.ok(validate({...valid(),cameras:'1.5'}).cameras));
+test('small datasets cannot silently omit held-out episodes',()=>{assert.ok(validate({...valid(),episodes:'3'}).validation);assert.deepEqual(validate({...valid(),episodes:'3',validation:'34',test:'34'}),{});});
+test('caps and bitrate boundaries',()=>{assert.ok(validate({...valid(),bitrate:'501'}).bitrate);assert.ok(validate({...valid(),hz:'241'}).hz);assert.deepEqual(validate({...valid(),bitrate:'.1'}),{});});
+test('split counts sum to budget with rounding',()=>{const e=estimate({...valid(),episodes:'127',validation:'13',test:'11'});assert.equal(e.training+e.validation+e.test,127);});
+test('unknown enum and checklist values rejected',()=>{assert.ok(validate({...valid(),method:'train-now'}).method);assert.ok(validate({...valid(),checks:['x']}).checks);assert.ok(validate({...valid(),checks:['sync','sync']}).checks);});
+test('plan is planning only with explicit missing checks',()=>{const p=buildPlan(valid(),'2026-10-15T00:00:00Z');assert.equal(p.mode,'planning-only');assert.equal(p.review.remaining.length,6);assert.equal(p.generatedAt,'2026-10-15T00:00:00Z');assert.equal(p.nominalSplit.training,96);});
+test('self-reported complete review is not certification',()=>{const p=buildPlan({...valid(),checks:CHECKS.map(c=>c[0])});assert.equal(p.review.selfReportedOnly,true);assert.equal(p.review.remaining.length,0);assert.match(p.limitations.join(' '),/No safety certification/);});
+test('reinforcement plan does not promise training runtime',()=>assert.match(buildPlan({...valid(),method:'reinforcement'}).nextSteps.join(' '),/not an RL training-time estimate/));
+test('draft round trip',()=>assert.deepEqual(restoreDraft(JSON.stringify({schema:'kuberix.draft.v1',values:valid()})),valid()));
+test('corrupt draft or huge field rejected',()=>{for(const s of ['bad','{}',JSON.stringify({schema:'kuberix.draft.v1',values:{...valid(),task:'x'.repeat(1300)}})])assert.throws(()=>restoreDraft(s));});
+test('user text is preserved as data',()=>assert.equal(buildPlan({...valid(),name:'<img src=x onerror=alert(1)>'}).project,'<img src=x onerror=alert(1)>'));
